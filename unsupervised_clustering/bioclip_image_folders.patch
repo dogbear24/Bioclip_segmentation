@@ -1,0 +1,183 @@
+--- a/bioclip_segment.py
++++ b/bioclip_segment.py
+@@ -6,7 +6,9 @@
+ 
+ from pathlib import Path
+ from datetime import datetime
++from collections import Counter
+ import argparse
++import hashlib
+ import os
+ import tempfile
+ import traceback
+@@ -31,6 +33,23 @@
+     "a small seedling",
+     "bare soil without plants",
+ ]
++
++
++def image_folder_names(images, input_path):
++    """Name one result folder per image without overwriting duplicate stems."""
++    root = input_path if input_path.is_dir() else input_path.parent
++    counts = Counter(image.stem.casefold() for image in images)
++    names = []
++    for image in images:
++        name = image.stem
++        if counts[name.casefold()] > 1 or len(name) > 120:
++            relative = image.relative_to(root).as_posix()
++            suffix = hashlib.sha256(relative.encode("utf-8")).hexdigest()[:12]
++            name = f"{name[:100]}_{suffix}"
++        names.append(name)
++    if len({name.casefold() for name in names}) != len(names):
++        raise ValueError("Image names produce duplicate output folders")
++    return names
+ 
+ 
+ def load_bioclip(device):
+@@ -340,30 +359,29 @@
+         soybean_mask, cv2.MORPH_OPEN, kernel3
+     )
+ 
+-    stem = image_path.stem
+-    save_image(output_dir / f"{stem}_vegetation_mask.png", vegetation_mask)
+-    save_image(output_dir / f"{stem}_candidate_mask.png", candidate_mask)
+-    save_image(output_dir / f"{stem}_soybean_mask.png", soybean_mask)
+-    save_image(output_dir / f"{stem}_soybean_before_trim_mask.png", soybean_before_trim)
++    save_image(output_dir / "vegetation_mask.png", vegetation_mask)
++    save_image(output_dir / "candidate_mask.png", candidate_mask)
++    save_image(output_dir / "soybean_mask.png", soybean_mask)
++    save_image(output_dir / "soybean_before_trim_mask.png", soybean_before_trim)
+ 
+     # Each segmentation mask shown directly on the full-resolution original.
+     # BGR: cyan = initial vegetation; yellow = shape-filtered proposals;
+     # green = final BioCLIP-accepted soybean mask.
+     save_mask_overlay(
+-        rgb, vegetation_mask, output_dir / f"{stem}_vegetation_overlay.jpg",
++        rgb, vegetation_mask, output_dir / "vegetation_overlay.jpg",
+         color_bgr=(255, 255, 0),
+     )
+     save_mask_overlay(
+-        rgb, candidate_mask, output_dir / f"{stem}_candidate_overlay.jpg",
++        rgb, candidate_mask, output_dir / "candidate_overlay.jpg",
+         color_bgr=(0, 255, 255),
+     )
+     save_mask_overlay(
+-        rgb, soybean_mask, output_dir / f"{stem}_soybean_overlay.jpg",
++        rgb, soybean_mask, output_dir / "soybean_overlay.jpg",
+         color_bgr=(0, 255, 0),
+     )
+     save_mask_overlay(
+         rgb, soybean_before_trim,
+-        output_dir / f"{stem}_soybean_before_trim_overlay.jpg",
++        output_dir / "soybean_before_trim_overlay.jpg",
+         color_bgr=(0, 0, 255),
+     )
+ 
+@@ -382,7 +400,7 @@
+             (row["x1"], max(15, row["y1"] - 5)),
+             cv2.FONT_HERSHEY_SIMPLEX, 0.45, (0, 255, 0), 1,
+         )
+-    save_image(output_dir / f"{stem}_overlay.jpg", overlay_bgr)
++    save_image(output_dir / "overlay.jpg", overlay_bgr)
+     return rows
+ 
+ 
+@@ -392,7 +410,7 @@
+     parser.add_argument("--output", default="bioclip_segmentation")
+     parser.add_argument(
+         "--output-mode", choices=["replace", "timestamp"], default="replace",
+-        help="replace previous results (default) or save a new timestamped folder"
++        help="update each image's result folder (default) or save a new timestamped folder"
+     )
+     parser.add_argument("--min-area", type=int, default=120)
+     parser.add_argument("--padding", type=int, default=12)
+@@ -425,11 +443,12 @@
+         images = [input_path]
+     elif input_path.is_dir():
+         images = sorted(p for p in input_path.rglob("*")
+-                        if p.suffix.lower() in extensions)
++                        if p.is_file() and p.suffix.lower() in extensions)
+     else:
+         parser.error(f"Input not found: {input_path.resolve()}")
+     if not images:
+         parser.error(f"No images found in {input_path.resolve()}")
++    folder_names = image_folder_names(images, input_path)
+ 
+     base_output_dir = Path(args.output)
+     if args.output_mode == "timestamp":
+@@ -458,13 +477,16 @@
+         prefix="bioclip_staging_", dir=str(output_dir.parent)
+     ) as staging_path:
+         staging_dir = Path(staging_path)
+-        all_rows = []
+         failures = []
+-        for image_path in tqdm(images, desc="Segmenting"):
++        for image_path, folder_name in tqdm(
++            zip(images, folder_names), total=len(images), desc="Segmenting"
++        ):
+             try:
++                image_output_dir = staging_dir / folder_name
++                image_output_dir.mkdir()
+                 rows = segment_image(
+                     image_path, model, preprocess, text_features,
+-                    device, staging_dir, min_area=args.min_area,
++                    device, image_output_dir, min_area=args.min_area,
+                     padding=args.padding,
+                     soybean_threshold=args.soybean_threshold,
+                     margin=args.margin,
+@@ -475,7 +497,9 @@
+                     max_thin_extension=args.max_thin_extension,
+                     min_broad_fraction=args.min_broad_fraction,
+                 )
+-                all_rows.extend(rows)
++                pd.DataFrame(rows).to_csv(
++                    image_output_dir / "component_scores.csv", index=False
++                )
+                 print(f"{image_path.name}: "
+                       f"{sum(r['keep_as_soybean'] for r in rows)} soybean regions")
+             except Exception:
+@@ -488,32 +512,19 @@
+                 "See traceback above for details."
+             )
+ 
+-        pd.DataFrame(all_rows).to_csv(staging_dir / "component_scores.csv", index=False)
+-
+-        # Replace only known generated files, preserving unrelated files in
+-        # the output directory. Run all processing before replacing anything.
++        # Publish only after every image succeeds. Update generated files inside
++        # each image's folder while preserving notes and other unrelated files.
++        # Legacy flat outputs are left untouched; new runs use image folders.
+         output_dir.mkdir(parents=True, exist_ok=True)
+-        if args.output_mode == "replace":
+-            generated_suffixes = (
+-                "_vegetation_mask.png", "_candidate_mask.png", "_soybean_mask.png",
+-                "_soybean_before_trim_mask.png",
+-                "_vegetation_overlay.jpg", "_candidate_overlay.jpg",
+-                "_soybean_overlay.jpg", "_soybean_before_trim_overlay.jpg",
+-                "_overlay.jpg",
+-            )
+-            for previous in output_dir.iterdir():
+-                if previous.is_file() and (
+-                    previous.name == "component_scores.csv" or
+-                    previous.name.endswith(generated_suffixes)
+-                ):
+-                    previous.unlink()
+-
+-        for result in staging_dir.iterdir():
+-            os.replace(result, output_dir / result.name)
+-
+-    mask_count = len(list(output_dir.glob("*_soybean_mask.png")))
+-    print(f"Saved masks for {mask_count} image(s): {output_dir.resolve()}", flush=True)
+-    print("Includes *_soybean_mask.png, *_soybean_overlay.jpg, and *_overlay.jpg")
++        for image_results in staging_dir.iterdir():
++            destination = output_dir / image_results.name
++            destination.mkdir(parents=True, exist_ok=True)
++            for result in image_results.iterdir():
++                os.replace(result, destination / result.name)
++
++    print(f"Saved results for {len(images)} image(s): {output_dir.resolve()}", flush=True)
++    print("Each image has its own folder with soybean_mask.png, "
++          "soybean_overlay.jpg, other previews, and component_scores.csv")
+ 
+ 
+ if __name__ == "__main__":

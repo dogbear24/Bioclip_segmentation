@@ -1,0 +1,23 @@
+# Python
+__pycache__/
+*.pyc
+.venv/
+venv/
+.env
+.env.*
+
+# Original research images
+soybean_images/
+
+# Generated clustering results
+soybean_results/
+bioclip_localization/
+bioclip_results/
+bioclip_segmentation/
+output/
+outputs/
+
+# Model weights
+*.pt
+*.pth
+*.ckpt
