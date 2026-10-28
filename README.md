@@ -1,61 +1,141 @@
 ﻿# Soybean Segmentation Using Unsupervised Clustering and BioCLIP
 
-This repository contains code I've been working on for identifying soybean plants in field images. The main goal is to separate soybean from surrounding weeds, grass, and soil using image processing and pretrained vision models.
+This repository contains an experimental computer vision pipeline for identifying and segmenting soybean plants in field imagery. The project explores unsupervised clustering, image processing, and pretrained vision models to distinguish soybean vegetation from surrounding weeds, grass, and soil.
 
-I started with unsupervised color clustering and later experimented with shape-based filtering and BioCLIP to improve how soybean regions are identified.
+The work focuses on soybean quadrat images collected under field conditions, where overlapping vegetation, variable lighting, and similar plant colors make accurate segmentation challenging.
 
-## Approach
+## Project Overview
 
-There are two main approaches in the project.
+The project includes two approaches to soybean segmentation:
 
-**Unsupervised clustering**
+**1. Unsupervised Color Clustering**
 
-The initial method uses K-means clustering to group pixels based on color. Additional filtering is used to identify vegetation and distinguish likely soybean regions from grass and other plants based on shape.
+The initial approach uses MiniBatchKMeans to group pixels based on their color characteristics. Images are converted into CIELAB color space, and normalized excess green (ExG) is used to help distinguish vegetation from background material.
 
-**BioCLIP segmentation**
+The pipeline includes:
 
-The second method uses a pretrained BioCLIP model to help identify soybean regions. It combines image processing with model-based scoring to generate segmentation masks.
+- Manual selection of the quadrat boundaries
+- Perspective correction and image preprocessing
+- Feature extraction using color and greenness
+- Unsupervised pixel clustering
+- Cluster visualization and evaluation
+- Optional assignment of clusters to soybean and non-soybean classes
 
-Neither approach requires training a segmentation model from scratch.
+Additional experiments explore shape-based filtering to improve separation between broadleaf soybean plants and narrow-leaf vegetation.
 
-## Files
+**2. BioCLIP-Based Segmentation**
 
-- `soybean_clustering.py` - Unsupervised clustering and shape-based filtering
-- `bioclip_inference.py` - BioCLIP inference experiments
-- `bioclip_localize.py` - Locating potential soybean regions
-- `bioclip_segment.py` - Generating soybean segmentation masks
-- `soybean_clustering_instructions.md` - Additional instructions for the clustering script
+The second approach incorporates a pretrained BioCLIP vision model to evaluate candidate soybean regions using learned visual features rather than relying entirely on pixel color.
 
-## Running the Code
+This pipeline focuses on:
 
-The scripts use Python. The BioCLIP approach requires the model and its dependencies to be installed. Dependencies are not pinned in this repository yet.
+- Identifying candidate vegetation regions
+- Evaluating candidate regions using BioCLIP
+- Filtering and refining soybean predictions
+- Generating segmentation masks and image overlays
+- Saving region-level scores for further analysis
 
-To run BioCLIP segmentation, navigate to the project folder:
+The objective is to investigate whether pretrained visual representations can improve soybean identification in images containing mixed vegetation.
 
-    cd unsupervised_clustering
+## Repository Structure
+
+```text
+Bioclip_segmentation/
+├── README.md
+├── .gitignore
+└── unsupervised_clustering/
+    ├── soybean_clustering.py
+    ├── soybean_clustering_instructions.md
+    ├── bioclip_inference.py
+    ├── bioclip_localize.py
+    └── bioclip_segment.py
+```
+
+| File | Description |
+|---|---|
+| `soybean_clustering.py` | Unsupervised clustering and vegetation analysis |
+| `bioclip_inference.py` | BioCLIP inference experiments |
+| `bioclip_localize.py` | Localization of potential soybean regions |
+| `bioclip_segment.py` | BioCLIP-based soybean segmentation pipeline |
+| `soybean_clustering_instructions.md` | Detailed instructions for running and reviewing clustering results |
+
+## Getting Started
+
+### Requirements
+
+The project is developed in Python and uses libraries for numerical computing, image processing, clustering, and deep learning.
+
+For the unsupervised clustering pipeline, install the required packages:
+
+```powershell
+python -m pip install numpy pillow scipy scikit-learn matplotlib joblib
+```
+
+The BioCLIP pipeline additionally requires PyTorch and the dependencies for loading the pretrained model. A complete pinned dependency list has not yet been added.
+
+### Unsupervised Clustering
+
+Navigate to the project directory:
+
+```powershell
+cd unsupervised_clustering
+```
 
 Place the input images in a folder named `soybean_images`, then run:
 
-    python bioclip_segment.py --input soybean_images --output bioclip_segmentation
+```powershell
+python soybean_clustering.py --input soybean_images --output soybean_results
+```
 
-The script processes the input images and creates a separate output folder for each one.
+For new images, the program prompts the user to select the four corners inside the PVC quadrat. The selected region is corrected for perspective and processed using the clustering pipeline.
 
-Outputs include:
+Results are saved in `soybean_results`, including cluster visualizations, vegetation masks, and summary statistics.
 
-- `soybean_mask.png` - Binary segmentation mask
-- `soybean_overlay.jpg` - Predicted soybean regions overlaid on the original image
-- `component_scores.csv` - Scores for candidate regions
+Additional options for model reuse, cluster assignment, and parameter adjustment are documented in `soybean_clustering_instructions.md`.
 
-The original field images and generated outputs are not included in this repository.
+### BioCLIP Segmentation
 
-## Current Limitations
+To process images using the BioCLIP segmentation pipeline:
 
-The biggest challenge is distinguishing soybean leaves from nearby weeds, especially when plants overlap or have similar colors.
+```powershell
+python bioclip_segment.py --input soybean_images --output bioclip_segmentation
+```
 
-Color clustering alone can confuse soybean with other vegetation. BioCLIP helps incorporate additional visual information, but segmentation is still imperfect, particularly in crowded areas with grass.
+The program processes each input image and saves the corresponding results in a separate folder.
 
-This is an experimental research project, and the resulting masks have not been validated as ground-truth segmentation.
+Generated outputs include:
+
+- `soybean_mask.png` — Predicted soybean segmentation mask
+- `soybean_overlay.jpg` — Segmentation results overlaid on the original image
+- `vegetation_mask.png` — Candidate vegetation mask
+- `component_scores.csv` — Region-level scoring information
+
+Additional intermediate masks and visualizations are saved for reviewing individual processing stages.
+
+## Current Results and Limitations
+
+Initial experiments show that unsupervised color clustering can identify vegetation regions, including soybean leaves. However, grass and other weeds frequently appear in the same clusters because of similarities in color and lighting.
+
+The BioCLIP approach incorporates pretrained visual features to help distinguish candidate soybean regions. Challenges remain in images with overlapping leaves, dense weeds, and visually similar plant species.
+
+Current limitations include:
+
+- Difficulty separating soybean from nearby vegetation
+- Sensitivity to differences in lighting and plant appearance
+- Incomplete segmentation of overlapping soybean leaves
+- Limited quantitative validation against manually annotated masks
+
+The pipeline remains experimental. A systematic evaluation using labeled images is needed before reporting segmentation accuracy or comparing the approaches quantitatively.
+
+## Future Work
+
+Planned improvements include integrating additional spatial and shape information, refining candidate-region selection, and testing segmentation across a larger range of field conditions.
+
+Future evaluation will focus on comparing predicted masks with manually annotated images using precision, recall, and intersection over union (IoU).
 
 ## References
 
-BioCLIP: https://github.com/Imageomics/bioclip
+- [BioCLIP — Imageomics](https://github.com/Imageomics/bioclip)
+- [scikit-learn — Clustering](https://scikit-learn.org/stable/modules/clustering.html)
+- [scikit-learn — MiniBatchKMeans](https://scikit-learn.org/stable/modules/generated/sklearn.cluster.MiniBatchKMeans.html)
+- [Pillow Documentation](https://pillow.readthedocs.io/en/stable/)
